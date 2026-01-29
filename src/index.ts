@@ -502,6 +502,10 @@ class FatSecretMCPServer {
                   type: "string",
                   description: "The FatSecret food ID",
                 },
+                foodName: {
+                  type: "string",
+                  description: "Name/description of the food item",
+                },
                 servingId: {
                   type: "string",
                   description: "The serving ID for the food",
@@ -512,8 +516,8 @@ class FatSecretMCPServer {
                 },
                 mealType: {
                   type: "string",
-                  description: "Meal type (breakfast, lunch, dinner, snack)",
-                  enum: ["breakfast", "lunch", "dinner", "snack"],
+                  description: "Meal type (breakfast, lunch, dinner, other)",
+                  enum: ["breakfast", "lunch", "dinner", "other"],
                 },
                 foodEntryName: {
                   type: "string",
@@ -524,7 +528,7 @@ class FatSecretMCPServer {
                   description: "Date in YYYY-MM-DD format (default: today)",
                 },
               },
-              required: ["foodId", "servingId", "quantity", "mealType", "foodEntryName"],
+              required: ["foodId", "foodName", "servingId", "quantity", "mealType"],
             },
           },
           {
@@ -995,7 +999,7 @@ class FatSecretMCPServer {
       const params = {
         method: "food_entry.create",
         food_id: args.foodId,
-        food_entry_name: args.foodEntryName,
+        food_entry_name: args.foodName,
         serving_id: args.servingId,
         number_of_units: args.quantity.toString(),
         meal: args.mealType,
