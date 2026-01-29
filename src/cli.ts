@@ -7,9 +7,7 @@
  * and save credentials to the config file.
  */
 
-import crypto from "crypto";
 import fetch from "node-fetch";
-import querystring from "querystring";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
@@ -18,6 +16,10 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import * as dotenv from "dotenv";
 
+import { generateSignature, buildOAuthParams } from "./oauth/signature.js";
+import { encodeParams } from "./utils/encoding.js";
+import type { FatSecretConfig } from "./types.js";
+
 // Suppress dotenv console output by temporarily overriding console.log
 const originalLog = console.log;
 console.log = () => {};
@@ -25,14 +27,6 @@ dotenv.config();
 console.log = originalLog;
 
 const execAsync = promisify(exec);
-
-interface FatSecretConfig {
-  clientId: string;
-  clientSecret: string;
-  accessToken?: string;
-  accessTokenSecret?: string;
-  userId?: string;
-}
 
 class FatSecretOAuthConsole {
   private config: FatSecretConfig;
@@ -104,162 +98,36 @@ class FatSecretOAuthConsole {
     }
   }
 
-  private generateNonce(): string {
-    return crypto.randomBytes(16).toString("hex");
-  }
-
-  private generateTimestamp(): string {
-    return Math.floor(Date.now() / 1000).toString();
-  }
-
-  private percentEncode(str: string): string {
-    return encodeURIComponent(str)
-      .replace(
-        /[!'()*]/g,
-        (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase(),
-      );
-  }
-
-  private createSignatureBaseString(
-    method: string,
-    url: string,
-    parameters: Record<string, string>,
-  ): string {
-    const sortedParams = Object.keys(parameters)
-      .sort()
-      .map((key) =>
-        `${this.percentEncode(key)}=${this.percentEncode(parameters[key])}`
-      )
-      .join("&");
-
-    return [
-      method.toUpperCase(),
-      this.percentEncode(url),
-      this.percentEncode(sortedParams),
-    ].join("&");
-  }
-
-  private createSigningKey(
-    clientSecret: string,
-    tokenSecret: string = "",
-  ): string {
-    return `${this.percentEncode(clientSecret)}&${
-      this.percentEncode(tokenSecret)
-    }`;
-  }
-
-  private generateSignature(
-    method: string,
-    url: string,
-    parameters: Record<string, string>,
-    clientSecret: string,
-    tokenSecret: string = "",
-  ): string {
-    const baseString = this.createSignatureBaseString(method, url, parameters);
-    const signingKey = this.createSigningKey(clientSecret, tokenSecret);
-
-    return crypto
-      .createHmac("sha1", signingKey)
-      .update(baseString)
-      .digest("base64");
-  }
-
-  private createOAuthHeader(
-    method: string,
-    url: string,
-    additionalParams: Record<string, string> = {},
-    token?: string,
-    tokenSecret?: string,
-    regularParams: Record<string, string> = {},
-  ): string {
-    const timestamp = this.generateTimestamp();
-    const nonce = this.generateNonce();
-
-    const oauthParams: Record<string, string> = {
-      oauth_consumer_key: this.config.clientId,
-      oauth_nonce: nonce,
-      oauth_signature_method: "HMAC-SHA1",
-      oauth_timestamp: timestamp,
-      oauth_version: "1.0",
-      ...additionalParams,
-    };
-
-    if (token) {
-      oauthParams.oauth_token = token;
-    }
-
-    // For signature calculation, we need ALL parameters (OAuth + regular)
-    const allParams = { ...oauthParams, ...regularParams };
-
-    const signature = this.generateSignature(
-      method,
-      url,
-      allParams,
-      this.config.clientSecret,
-      tokenSecret,
-    );
-
-    oauthParams.oauth_signature = signature;
-
-    const headerParts = Object.keys(oauthParams)
-      .sort()
-      .map((key) =>
-        `${this.percentEncode(key)}="${this.percentEncode(oauthParams[key])}"`
-      )
-      .join(", ");
-
-    return `OAuth ${headerParts}`;
-  }
-
   private async makeOAuthRequest(
     method: string,
     url: string,
     params: Record<string, string> = {},
     token?: string,
     tokenSecret?: string,
-  ): Promise<any> {
-    const timestamp = this.generateTimestamp();
-    const nonce = this.generateNonce();
+  ): Promise<Record<string, unknown>> {
+    const oauthParams = buildOAuthParams(this.config.clientId, token);
+    const allParams: Record<string, string> = { ...params, ...oauthParams };
 
-    // Build OAuth parameters
-    const oauthParams: Record<string, string> = {
-      oauth_consumer_key: this.config.clientId,
-      oauth_nonce: nonce,
-      oauth_signature_method: "HMAC-SHA1",
-      oauth_timestamp: timestamp,
-      oauth_version: "1.0",
-    };
-
-    if (token) {
-      oauthParams.oauth_token = token;
-    }
-
-    // Combine OAuth and regular parameters for signature
-    const allParams = { ...params, ...oauthParams };
-
-    // Generate signature with all parameters
-    const signature = this.generateSignature(
+    const signature = generateSignature(
       method,
       url,
       allParams,
       this.config.clientSecret,
       tokenSecret,
     );
-
-    // Add signature to the parameters
     allParams.oauth_signature = signature;
-    
-    const options: any = {
+
+    const options: { method: string; headers: Record<string, string>; body?: string } = {
       method,
       headers: {},
     };
 
     let requestUrl = url;
     if (method === "GET") {
-      requestUrl += "?" + querystring.stringify(allParams);
+      requestUrl += "?" + encodeParams(allParams);
     } else if (method === "POST") {
       options.headers["Content-Type"] = "application/x-www-form-urlencoded";
-      options.body = querystring.stringify(allParams);
+      options.body = encodeParams(allParams);
     }
 
     console.log(`Making ${method} request to: ${requestUrl}`);
@@ -273,11 +141,19 @@ class FatSecretOAuthConsole {
       throw new Error(`HTTP ${response.status}: ${text}`);
     }
 
-    // Try to parse as JSON, fallback to query string
+    // Try to parse as JSON, fallback to query string parsing
     try {
       return JSON.parse(text);
     } catch {
-      return querystring.parse(text);
+      // Parse query string format: key=value&key2=value2
+      const result: Record<string, string> = {};
+      for (const pair of text.split("&")) {
+        const [key, value] = pair.split("=");
+        if (key) {
+          result[decodeURIComponent(key)] = decodeURIComponent(value || "");
+        }
+      }
+      return result;
     }
   }
 
@@ -286,52 +162,31 @@ class FatSecretOAuthConsole {
     params: Record<string, string> = {},
     token?: string,
     tokenSecret?: string,
-  ): Promise<any> {
-    const timestamp = this.generateTimestamp();
-    const nonce = this.generateNonce();
+  ): Promise<Record<string, unknown>> {
+    const oauthParams = buildOAuthParams(this.config.clientId, token);
+    // Don't mutate the original params
+    const allParams: Record<string, string> = { ...params, format: "json", ...oauthParams };
 
-    // Build OAuth parameters
-    const oauthParams: Record<string, string> = {
-      oauth_consumer_key: this.config.clientId,
-      oauth_nonce: nonce,
-      oauth_signature_method: "HMAC-SHA1",
-      oauth_timestamp: timestamp,
-      oauth_version: "1.0",
-    };
-
-    if (token) {
-      oauthParams.oauth_token = token;
-    }
-
-    // Add format=json for API requests
-    params.format = "json";
-
-    // Combine OAuth and regular parameters for signature
-    const allParams = { ...params, ...oauthParams };
-
-    // Generate signature with all parameters
-    const signature = this.generateSignature(
+    const signature = generateSignature(
       method,
       this.apiUrl,
       allParams,
       this.config.clientSecret,
       tokenSecret,
     );
-
-    // Add signature to the parameters
     allParams.oauth_signature = signature;
-    
-    const options: any = {
+
+    const options: { method: string; headers: Record<string, string>; body?: string } = {
       method,
       headers: {},
     };
 
     let requestUrl = this.apiUrl;
     if (method === "GET") {
-      requestUrl += "?" + querystring.stringify(allParams);
+      requestUrl += "?" + encodeParams(allParams);
     } else if (method === "POST") {
       options.headers["Content-Type"] = "application/x-www-form-urlencoded";
-      options.body = querystring.stringify(allParams);
+      options.body = encodeParams(allParams);
     }
 
     const response = await fetch(requestUrl, options);
@@ -341,11 +196,19 @@ class FatSecretOAuthConsole {
       throw new Error(`HTTP ${response.status}: ${text}`);
     }
 
-    // Try to parse as JSON, fallback to query string
+    // Try to parse as JSON, fallback to query string parsing
     try {
       return JSON.parse(text);
     } catch {
-      return querystring.parse(text);
+      // Parse query string format: key=value&key2=value2
+      const result: Record<string, string> = {};
+      for (const pair of text.split("&")) {
+        const [key, value] = pair.split("=");
+        if (key) {
+          result[decodeURIComponent(key)] = decodeURIComponent(value || "");
+        }
+      }
+      return result;
     }
   }
 
@@ -405,8 +268,8 @@ class FatSecretOAuthConsole {
 
       console.log("Response from request token endpoint:", response);
 
-      requestToken = response.oauth_token;
-      requestTokenSecret = response.oauth_token_secret;
+      requestToken = response.oauth_token as string;
+      requestTokenSecret = response.oauth_token_secret as string;
 
       if (!requestToken || !requestTokenSecret) {
         throw new Error("Invalid response: missing token or token secret");
@@ -464,9 +327,9 @@ class FatSecretOAuthConsole {
         );
       }
 
-      this.config.accessToken = accessResponse.oauth_token;
-      this.config.accessTokenSecret = accessResponse.oauth_token_secret;
-      this.config.userId = accessResponse.user_id;
+      this.config.accessToken = accessResponse.oauth_token as string;
+      this.config.accessTokenSecret = accessResponse.oauth_token_secret as string;
+      this.config.userId = accessResponse.user_id as string | undefined;
 
       await this.saveConfig();
 

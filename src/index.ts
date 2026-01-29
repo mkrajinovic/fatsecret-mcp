@@ -8,62 +8,64 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
-import crypto from "crypto";
-import fetch from "node-fetch";
-import querystring from "querystring";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import * as dotenv from "dotenv";
+import { FatSecretClient, FatSecretConfig } from "./client.js";
+import type {
+  SetCredentialsInput,
+  StartOAuthFlowInput,
+  CompleteOAuthFlowInput,
+  SearchFoodsInput,
+  GetFoodInput,
+  SearchRecipesInput,
+  GetRecipeInput,
+  GetFoodEntriesInput,
+  AddFoodEntryInput,
+  EditFoodEntryInput,
+  DeleteFoodEntryInput,
+  GetFoodEntriesMonthInput,
+  GetWeightMonthInput,
+  UpdateWeightInput,
+  GetSavedMealsInput,
+  CreateSavedMealInput,
+  EditSavedMealInput,
+  DeleteSavedMealInput,
+  GetSavedMealItemsInput,
+  AddSavedMealItemInput,
+  EditSavedMealItemInput,
+  DeleteSavedMealItemInput,
+  AddFoodFavoriteInput,
+  DeleteFoodFavoriteInput,
+  GetMostEatenInput,
+  GetRecentlyEatenInput,
+  AddRecipeFavoriteInput,
+  DeleteRecipeFavoriteInput,
+} from "./types.js";
 
-// Suppress dotenv console output by temporarily overriding console.log
+// Suppress dotenv console output
 const originalLog = console.log;
 console.log = () => {};
 dotenv.config();
 console.log = originalLog;
 
-interface FatSecretConfig {
-  clientId: string;
-  clientSecret: string;
-  accessToken?: string;
-  accessTokenSecret?: string;
-  userId?: string;
-}
-
-interface OAuthToken {
-  oauth_token: string;
-  oauth_token_secret: string;
-  oauth_callback_confirmed?: string;
-}
-
-interface AccessToken {
-  oauth_token: string;
-  oauth_token_secret: string;
-  user_id?: string;
-}
-
 class FatSecretMCPServer {
   private server: Server;
-  private config: FatSecretConfig;
+  private client: FatSecretClient;
   private configPath: string;
-  private readonly baseUrl = "https://platform.fatsecret.com/rest/server.api";
-  private readonly requestTokenUrl = "https://authentication.fatsecret.com/oauth/request_token";
-  private readonly authorizeUrl = "https://authentication.fatsecret.com/oauth/authorize";
-  private readonly accessTokenUrl = "https://authentication.fatsecret.com/oauth/access_token";
 
   constructor() {
-    this.server = new Server(
-      {
-        name: "fatsecret-mcp-server",
-        version: "0.1.0",
-      }
-    );
+    this.server = new Server({
+      name: "fatsecret-mcp-server",
+      version: "0.1.0",
+    });
 
     this.configPath = path.join(os.homedir(), ".fatsecret-mcp-config.json");
-    this.config = {
+    this.client = new FatSecretClient({
       clientId: process.env.CLIENT_ID || "",
       clientSecret: process.env.CLIENT_SECRET || "",
-    };
+    });
 
     this.setupToolHandlers();
   }
@@ -71,265 +73,18 @@ class FatSecretMCPServer {
   private async loadConfig(): Promise<void> {
     try {
       const configData = await fs.readFile(this.configPath, "utf-8");
-      this.config = { ...this.config, ...JSON.parse(configData) };
-    } catch (error) {
+      const savedConfig = JSON.parse(configData);
+      this.client.updateConfig(savedConfig);
+    } catch {
       // Config file doesn't exist, will be created when credentials are set
     }
   }
 
   private async saveConfig(): Promise<void> {
-    await fs.writeFile(this.configPath, JSON.stringify(this.config, null, 2));
-  }
-
-  private generateNonce(): string {
-    return crypto.randomBytes(16).toString("hex");
-  }
-
-  private generateTimestamp(): string {
-    return Math.floor(Date.now() / 1000).toString();
-  }
-
-  private dateToFatSecretFormat(dateString?: string): string {
-    // Convert date to days since epoch (1970-01-01)
-    // If no date provided, use today
-    const date = dateString ? new Date(dateString) : new Date();
-    const epochStart = new Date('1970-01-01');
-    const daysSinceEpoch = Math.floor((date.getTime() - epochStart.getTime()) / (1000 * 60 * 60 * 24));
-    return daysSinceEpoch.toString();
-  }
-
-  private percentEncode(str: string): string {
-    return encodeURIComponent(str)
-      .replace(
-        /[!'()*]/g,
-        (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase(),
-      );
-  }
-
-  private createSignatureBaseString(
-    method: string,
-    url: string,
-    parameters: Record<string, string>,
-  ): string {
-    const sortedParams = Object.keys(parameters)
-      .sort()
-      .map((key) =>
-        `${this.percentEncode(key)}=${this.percentEncode(parameters[key])}`
-      )
-      .join("&");
-
-    return [
-      method.toUpperCase(),
-      this.percentEncode(url),
-      this.percentEncode(sortedParams),
-    ].join("&");
-  }
-
-  private createSigningKey(
-    clientSecret: string,
-    tokenSecret: string = "",
-  ): string {
-    return `${this.percentEncode(clientSecret)}&${
-      this.percentEncode(tokenSecret)
-    }`;
-  }
-
-  private generateSignature(
-    method: string,
-    url: string,
-    parameters: Record<string, string>,
-    clientSecret: string,
-    tokenSecret: string = "",
-  ): string {
-    const baseString = this.createSignatureBaseString(method, url, parameters);
-    const signingKey = this.createSigningKey(clientSecret, tokenSecret);
-
-    return crypto
-      .createHmac("sha1", signingKey)
-      .update(baseString)
-      .digest("base64");
-  }
-
-  private createOAuthHeader(
-    method: string,
-    url: string,
-    additionalParams: Record<string, string> = {},
-    token?: string,
-    tokenSecret?: string,
-    regularParams: Record<string, string> = {},
-  ): string {
-    const timestamp = this.generateTimestamp();
-    const nonce = this.generateNonce();
-
-    const oauthParams: Record<string, string> = {
-      oauth_consumer_key: this.config.clientId,
-      oauth_nonce: nonce,
-      oauth_signature_method: "HMAC-SHA1",
-      oauth_timestamp: timestamp,
-      oauth_version: "1.0",
-      ...additionalParams,
-    };
-
-    if (token) {
-      oauthParams.oauth_token = token;
-    }
-
-    // For signature calculation, we need ALL parameters (OAuth + regular)
-    const allParams = { ...oauthParams, ...regularParams };
-
-    const signature = this.generateSignature(
-      method,
-      url,
-      allParams,
-      this.config.clientSecret,
-      tokenSecret,
+    await fs.writeFile(
+      this.configPath,
+      JSON.stringify(this.client.getConfig(), null, 2)
     );
-
-    oauthParams.oauth_signature = signature;
-
-    const headerParts = Object.keys(oauthParams)
-      .sort()
-      .map((key) =>
-        `${this.percentEncode(key)}="${this.percentEncode(oauthParams[key])}"`
-      )
-      .join(", ");
-
-    return `OAuth ${headerParts}`;
-  }
-
-  private async makeOAuthRequest(
-    method: string,
-    url: string,
-    params: Record<string, string> = {},
-    token?: string,
-    tokenSecret?: string,
-  ): Promise<any> {
-    const timestamp = this.generateTimestamp();
-    const nonce = this.generateNonce();
-
-    // Build OAuth parameters
-    const oauthParams: Record<string, string> = {
-      oauth_consumer_key: this.config.clientId,
-      oauth_nonce: nonce,
-      oauth_signature_method: "HMAC-SHA1",
-      oauth_timestamp: timestamp,
-      oauth_version: "1.0",
-    };
-
-    if (token) {
-      oauthParams.oauth_token = token;
-    }
-
-    // Combine OAuth and regular parameters for signature
-    const allParams = { ...params, ...oauthParams };
-
-    // Generate signature with all parameters
-    const signature = this.generateSignature(
-      method,
-      url,
-      allParams,
-      this.config.clientSecret,
-      tokenSecret,
-    );
-
-    // Add signature to the parameters
-    allParams.oauth_signature = signature;
-
-    const options: any = {
-      method,
-      headers: {},
-    };
-
-    let requestUrl = url;
-    if (method === "GET") {
-      requestUrl += "?" + querystring.stringify(allParams);
-    } else if (method === "POST") {
-      options.headers["Content-Type"] = "application/x-www-form-urlencoded";
-      options.body = querystring.stringify(allParams);
-    }
-
-    const response = await fetch(requestUrl, options);
-    const text = await response.text();
-
-    if (!response.ok) {
-      throw new Error(`OAuth error: ${response.status} - ${text}`);
-    }
-
-    // Try to parse as JSON, fallback to query string
-    try {
-      return JSON.parse(text);
-    } catch {
-      return querystring.parse(text);
-    }
-  }
-
-  private async makeApiRequest(
-    method: string,
-    url: string,
-    params: Record<string, string> = {},
-    useAccessToken: boolean = true,
-  ): Promise<any> {
-    const timestamp = this.generateTimestamp();
-    const nonce = this.generateNonce();
-
-    // Build OAuth parameters
-    const oauthParams: Record<string, string> = {
-      oauth_consumer_key: this.config.clientId,
-      oauth_nonce: nonce,
-      oauth_signature_method: "HMAC-SHA1",
-      oauth_timestamp: timestamp,
-      oauth_version: "1.0",
-    };
-
-    if (useAccessToken && this.config.accessToken && this.config.accessTokenSecret) {
-      oauthParams.oauth_token = this.config.accessToken;
-    }
-
-    // Add format=json for API requests
-    params.format = "json";
-
-    // Combine OAuth and regular parameters for signature
-    const allParams = { ...params, ...oauthParams };
-
-    // Generate signature with all parameters
-    const tokenSecret = useAccessToken ? this.config.accessTokenSecret : undefined;
-    const signature = this.generateSignature(
-      method,
-      url,
-      allParams,
-      this.config.clientSecret,
-      tokenSecret,
-    );
-
-    // Add signature to the parameters
-    allParams.oauth_signature = signature;
-
-    const options: any = {
-      method,
-      headers: {},
-    };
-
-    let requestUrl = url;
-    if (method === "GET") {
-      requestUrl += "?" + querystring.stringify(allParams);
-    } else if (method === "POST") {
-      options.headers["Content-Type"] = "application/x-www-form-urlencoded";
-      options.body = querystring.stringify(allParams);
-    }
-
-    const response = await fetch(requestUrl, options);
-    const text = await response.text();
-
-    if (!response.ok) {
-      throw new Error(`FatSecret API error: ${response.status} - ${text}`);
-    }
-
-    // Try to parse as JSON, fallback to query string
-    try {
-      return JSON.parse(text);
-    } catch {
-      return querystring.parse(text);
-    }
   }
 
   private setupToolHandlers() {
@@ -338,27 +93,19 @@ class FatSecretMCPServer {
         tools: [
           {
             name: "set_credentials",
-            description:
-              "Set FatSecret API credentials (Client ID and Client Secret)",
+            description: "Set FatSecret API credentials (Client ID and Client Secret)",
             inputSchema: {
               type: "object",
               properties: {
-                clientId: {
-                  type: "string",
-                  description: "Your FatSecret Client ID",
-                },
-                clientSecret: {
-                  type: "string",
-                  description: "Your FatSecret Client Secret",
-                },
+                clientId: { type: "string", description: "Your FatSecret Client ID" },
+                clientSecret: { type: "string", description: "Your FatSecret Client Secret" },
               },
               required: ["clientId", "clientSecret"],
             },
           },
           {
             name: "start_oauth_flow",
-            description:
-              "Start the 3-legged OAuth flow to get user authorization",
+            description: "Start the 3-legged OAuth flow to get user authorization",
             inputSchema: {
               type: "object",
               properties: {
@@ -372,161 +119,111 @@ class FatSecretMCPServer {
           },
           {
             name: "complete_oauth_flow",
-            description:
-              "Complete the OAuth flow with the authorization code/verifier",
+            description: "Complete the OAuth flow with the authorization code/verifier",
             inputSchema: {
               type: "object",
               properties: {
-                requestToken: {
-                  type: "string",
-                  description: "The request token from start_oauth_flow",
-                },
-                requestTokenSecret: {
-                  type: "string",
-                  description: "The request token secret from start_oauth_flow",
-                },
-                verifier: {
-                  type: "string",
-                  description:
-                    "The OAuth verifier from the callback or authorization page",
-                },
+                requestToken: { type: "string", description: "The request token from start_oauth_flow" },
+                requestTokenSecret: { type: "string", description: "The request token secret from start_oauth_flow" },
+                verifier: { type: "string", description: "The OAuth verifier from the callback or authorization page" },
               },
               required: ["requestToken", "requestTokenSecret", "verifier"],
             },
           },
           {
             name: "search_foods",
-            description: "Search for foods in the FatSecret database",
+            description: "Search for foods in the FatSecret database. Returns up to 50 results per page.",
             inputSchema: {
               type: "object",
               properties: {
-                searchExpression: {
-                  type: "string",
-                  description:
-                    'Search term for foods (e.g., "chicken breast", "apple")',
-                },
-                pageNumber: {
-                  type: "number",
-                  description: "Page number for results (default: 0)",
-                  default: 0,
-                },
-                maxResults: {
-                  type: "number",
-                  description: "Maximum results per page (default: 20)",
-                  default: 20,
-                },
+                searchExpression: { type: "string", description: 'Search term for foods (e.g., "chicken breast", "apple")' },
+                pageNumber: { type: "number", description: "Page number for results (default: 0)", default: 0 },
+                maxResults: { type: "number", description: "Maximum results per page (default: 20, max: 50)", default: 20 },
+                region: { type: "string", description: "Region filter code (default: 'US')" },
+                language: { type: "string", description: "Result language when region is set" },
               },
               required: ["searchExpression"],
             },
           },
           {
             name: "get_food",
-            description: "Get detailed information about a specific food item",
+            description: "Get detailed nutrition information for a food item. Note: Servings with serving_id=0 cannot be used for diary entries.",
             inputSchema: {
               type: "object",
               properties: {
-                foodId: {
-                  type: "string",
-                  description: "The FatSecret food ID",
-                },
+                foodId: { type: "string", description: "The FatSecret food ID" },
+                region: { type: "string", description: "Region filter code (default: 'US')" },
+                language: { type: "string", description: "Result language when region is set" },
               },
               required: ["foodId"],
             },
           },
           {
             name: "search_recipes",
-            description: "Search for recipes in the FatSecret database",
+            description: "Search for recipes in the FatSecret database. Returns up to 50 results per page.",
             inputSchema: {
               type: "object",
               properties: {
-                searchExpression: {
-                  type: "string",
-                  description: "Search term for recipes",
-                },
-                pageNumber: {
-                  type: "number",
-                  description: "Page number for results (default: 0)",
-                  default: 0,
-                },
-                maxResults: {
-                  type: "number",
-                  description: "Maximum results per page (default: 20)",
-                  default: 20,
-                },
+                searchExpression: { type: "string", description: "Search term for recipes" },
+                recipeTypes: { type: "string", description: "Filter by recipe types (comma-separated). Values: Appetizer, Breakfast, Dessert, Main Dish, Salad, Side Dish, Soup, Snack" },
+                recipeTypesMatchAll: { type: "boolean", description: "If true, recipes must match all types (default: false)" },
+                mustHaveImages: { type: "boolean", description: "Only return recipes with images" },
+                caloriesFrom: { type: "number", description: "Minimum calories per serving" },
+                caloriesTo: { type: "number", description: "Maximum calories per serving" },
+                carbPercentageFrom: { type: "number", description: "Minimum carb percentage of calories" },
+                carbPercentageTo: { type: "number", description: "Maximum carb percentage of calories" },
+                proteinPercentageFrom: { type: "number", description: "Minimum protein percentage of calories" },
+                proteinPercentageTo: { type: "number", description: "Maximum protein percentage of calories" },
+                fatPercentageFrom: { type: "number", description: "Minimum fat percentage of calories" },
+                fatPercentageTo: { type: "number", description: "Maximum fat percentage of calories" },
+                prepTimeFrom: { type: "number", description: "Minimum prep time in minutes" },
+                prepTimeTo: { type: "number", description: "Maximum prep time in minutes" },
+                sortBy: { type: "string", enum: ["newest", "oldest", "caloriesPerServingAscending", "caloriesPerServingDescending"], description: "Sort order for results" },
+                pageNumber: { type: "number", description: "Page number for results (default: 0)", default: 0 },
+                maxResults: { type: "number", description: "Maximum results per page (default: 20, max: 50)", default: 20 },
               },
               required: ["searchExpression"],
             },
           },
           {
             name: "get_recipe",
-            description: "Get detailed information about a specific recipe",
+            description: "Get detailed information about a specific recipe including ingredients and instructions.",
             inputSchema: {
               type: "object",
               properties: {
-                recipeId: {
-                  type: "string",
-                  description: "The FatSecret recipe ID",
-                },
+                recipeId: { type: "string", description: "The FatSecret recipe ID" },
+                language: { type: "string", description: "Result language" },
               },
               required: ["recipeId"],
             },
           },
           {
             name: "get_user_profile",
-            description: "Get the authenticated user's profile information",
-            inputSchema: {
-              type: "object",
-              properties: {},
-            },
+            description: "Get the authenticated user's profile information. Requires OAuth authentication.",
+            inputSchema: { type: "object", properties: {} },
           },
           {
             name: "get_user_food_entries",
-            description: "Get user's food diary entries for a specific date",
+            description: "Get user's food diary entries for a specific date. Requires OAuth authentication.",
             inputSchema: {
               type: "object",
               properties: {
-                date: {
-                  type: "string",
-                  description: "Date in YYYY-MM-DD format (default: today)",
-                },
+                date: { type: "string", description: "Date in YYYY-MM-DD format (default: today)" },
               },
             },
           },
           {
             name: "add_food_entry",
-            description: "Add a food entry to the user's diary",
+            description: "Add a food entry to the user's food diary. Requires OAuth authentication. Quantity must be greater than 0.",
             inputSchema: {
               type: "object",
               properties: {
-                foodId: {
-                  type: "string",
-                  description: "The FatSecret food ID",
-                },
-                foodName: {
-                  type: "string",
-                  description: "Name/description of the food item",
-                },
-                servingId: {
-                  type: "string",
-                  description: "The serving ID for the food",
-                },
-                quantity: {
-                  type: "number",
-                  description: "Quantity of the serving",
-                },
-                mealType: {
-                  type: "string",
-                  description: "Meal type (breakfast, lunch, dinner, other)",
-                  enum: ["breakfast", "lunch", "dinner", "other"],
-                },
-                foodEntryName: {
-                  type: "string",
-                  description: "Name/description of the food entry (e.g., 'Chicken Breast')",
-                },
-                date: {
-                  type: "string",
-                  description: "Date in YYYY-MM-DD format (default: today)",
-                },
+                foodId: { type: "string", description: "The FatSecret food ID" },
+                foodName: { type: "string", description: "Name/description of the food item" },
+                servingId: { type: "string", description: "The serving ID for the food" },
+                quantity: { type: "number", description: "Quantity of the serving (must be > 0)" },
+                mealType: { type: "string", description: "Meal type (breakfast, lunch, dinner, other)", enum: ["breakfast", "lunch", "dinner", "other"] },
+                date: { type: "string", description: "Date in YYYY-MM-DD format (default: today)" },
               },
               required: ["foodId", "foodName", "servingId", "quantity", "mealType"],
             },
@@ -579,23 +276,246 @@ class FatSecretMCPServer {
           {
             name: "check_auth_status",
             description: "Check if the user is authenticated with FatSecret",
-            inputSchema: {
-              type: "object",
-              properties: {},
-            },
+            inputSchema: { type: "object", properties: {} },
           },
           {
             name: "get_weight_month",
-            description: "Get user's weight entries for a specific month",
+            description: "Get user's weight entries for a specific month. Requires OAuth authentication.",
             inputSchema: {
               type: "object",
               properties: {
-                date: {
-                  type: "string",
-                  description: "Date in YYYY-MM-DD format to specify the month (default: current month)",
-                },
+                date: { type: "string", description: "Date in YYYY-MM-DD format to specify the month (default: current month)" },
               },
             },
+          },
+          {
+            name: "edit_food_entry",
+            description: "Edit an existing food diary entry. Requires OAuth authentication. Note: Entry date cannot be changed.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                foodEntryId: { type: "string", description: "The food entry ID to edit" },
+                foodName: { type: "string", description: "New name/description for the food entry" },
+                servingId: { type: "string", description: "New serving ID" },
+                quantity: { type: "number", description: "New quantity (must be > 0)" },
+                mealType: { type: "string", description: "New meal type (breakfast, lunch, dinner, other)", enum: ["breakfast", "lunch", "dinner", "other"] },
+              },
+              required: ["foodEntryId"],
+            },
+          },
+          {
+            name: "delete_food_entry",
+            description: "Delete a food diary entry. Requires OAuth authentication.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                foodEntryId: { type: "string", description: "The food entry ID to delete" },
+              },
+              required: ["foodEntryId"],
+            },
+          },
+          {
+            name: "get_food_entries_month",
+            description: "Get summary of user's food diary entries for a month. Returns daily totals of calories and macros. Requires OAuth authentication.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                date: { type: "string", description: "Date in YYYY-MM-DD format to specify the month (default: current month)" },
+              },
+            },
+          },
+          {
+            name: "update_weight",
+            description: "Add or update a weight entry for today. Requires OAuth authentication. Weight must be > 0. For first weigh-in, height may be required.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                currentWeightKg: { type: "number", description: "Current weight in kilograms (must be > 0)" },
+                date: { type: "string", description: "Date in YYYY-MM-DD format (default: today). Note: Only today's date is supported." },
+                weightType: { type: "string", enum: ["kg", "lb"], description: "Weight measurement unit (default: 'kg')" },
+                heightType: { type: "string", enum: ["cm", "inch"], description: "Height measurement unit (default: 'cm')" },
+                goalWeightKg: { type: "number", description: "Goal weight in kilograms" },
+                currentHeightCm: { type: "number", description: "Current height in cm (required for first weigh-in)" },
+                comment: { type: "string", description: "Optional comment for the weight entry" },
+              },
+              required: ["currentWeightKg"],
+            },
+          },
+          {
+            name: "get_saved_meals",
+            description: "Get all saved meals for the authenticated user. Requires OAuth authentication.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                meal: { type: "string", enum: ["breakfast", "lunch", "dinner", "other"], description: "Filter by meal type" },
+              },
+            },
+          },
+          {
+            name: "create_saved_meal",
+            description: "Create a new saved meal. Requires OAuth authentication.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                name: { type: "string", description: "Name of the saved meal" },
+                description: { type: "string", description: "Description of the saved meal" },
+                meals: { type: "string", description: "Comma-separated list of meal types (breakfast, lunch, dinner, other)" },
+              },
+              required: ["name"],
+            },
+          },
+          {
+            name: "edit_saved_meal",
+            description: "Edit an existing saved meal. Requires OAuth authentication.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                savedMealId: { type: "string", description: "The saved meal ID to edit" },
+                name: { type: "string", description: "New name for the saved meal" },
+                description: { type: "string", description: "New description for the saved meal" },
+                meals: { type: "string", description: "New comma-separated list of meal types" },
+              },
+              required: ["savedMealId"],
+            },
+          },
+          {
+            name: "delete_saved_meal",
+            description: "Delete a saved meal. Requires OAuth authentication.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                savedMealId: { type: "string", description: "The saved meal ID to delete" },
+              },
+              required: ["savedMealId"],
+            },
+          },
+          {
+            name: "get_saved_meal_items",
+            description: "Get all items in a saved meal. Requires OAuth authentication.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                savedMealId: { type: "string", description: "The saved meal ID" },
+              },
+              required: ["savedMealId"],
+            },
+          },
+          {
+            name: "add_saved_meal_item",
+            description: "Add a food item to a saved meal. Requires OAuth authentication.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                savedMealId: { type: "string", description: "The saved meal ID" },
+                foodId: { type: "string", description: "The food ID to add" },
+                itemName: { type: "string", description: "Name for the item" },
+                servingId: { type: "string", description: "The serving ID" },
+                quantity: { type: "number", description: "Quantity of servings (must be > 0)" },
+              },
+              required: ["savedMealId", "foodId", "itemName", "servingId", "quantity"],
+            },
+          },
+          {
+            name: "edit_saved_meal_item",
+            description: "Edit an item in a saved meal. Requires OAuth authentication. Note: serving_id cannot be changed.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                savedMealItemId: { type: "string", description: "The saved meal item ID to edit" },
+                itemName: { type: "string", description: "New name for the item" },
+                quantity: { type: "number", description: "New quantity (must be > 0)" },
+              },
+              required: ["savedMealItemId"],
+            },
+          },
+          {
+            name: "delete_saved_meal_item",
+            description: "Delete an item from a saved meal. Requires OAuth authentication.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                savedMealItemId: { type: "string", description: "The saved meal item ID to delete" },
+              },
+              required: ["savedMealItemId"],
+            },
+          },
+          {
+            name: "add_food_favorite",
+            description: "Add a food to user's favorites. Requires OAuth authentication.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                foodId: { type: "string", description: "The food ID to add to favorites" },
+                servingId: { type: "string", description: "Optional serving ID" },
+                quantity: { type: "number", description: "Optional quantity (must be > 0)" },
+              },
+              required: ["foodId"],
+            },
+          },
+          {
+            name: "delete_food_favorite",
+            description: "Remove a food from user's favorites. Requires OAuth authentication.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                foodId: { type: "string", description: "The food ID to remove from favorites" },
+                servingId: { type: "string", description: "Optional serving ID" },
+                quantity: { type: "number", description: "Optional quantity (must be > 0)" },
+              },
+              required: ["foodId"],
+            },
+          },
+          {
+            name: "get_favorite_foods",
+            description: "Get all favorite foods for the authenticated user. Requires OAuth authentication.",
+            inputSchema: { type: "object", properties: {} },
+          },
+          {
+            name: "get_most_eaten_foods",
+            description: "Get most frequently eaten foods for the authenticated user. Requires OAuth authentication.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                meal: { type: "string", enum: ["breakfast", "lunch", "dinner", "other"], description: "Filter by meal type" },
+              },
+            },
+          },
+          {
+            name: "get_recently_eaten_foods",
+            description: "Get recently eaten foods for the authenticated user. Requires OAuth authentication.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                meal: { type: "string", enum: ["breakfast", "lunch", "dinner", "other"], description: "Filter by meal type" },
+              },
+            },
+          },
+          {
+            name: "add_recipe_favorite",
+            description: "Add a recipe to user's favorites. Requires OAuth authentication.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                recipeId: { type: "string", description: "The recipe ID to add to favorites" },
+              },
+              required: ["recipeId"],
+            },
+          },
+          {
+            name: "delete_recipe_favorite",
+            description: "Remove a recipe from user's favorites. Requires OAuth authentication.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                recipeId: { type: "string", description: "The recipe ID to remove from favorites" },
+              },
+              required: ["recipeId"],
+            },
+          },
+          {
+            name: "get_favorite_recipes",
+            description: "Get all favorite recipes for the authenticated user. Requires OAuth authentication.",
+            inputSchema: { type: "object", properties: {} },
           },
         ],
       };
@@ -604,538 +524,256 @@ class FatSecretMCPServer {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       await this.loadConfig();
 
-      switch (request.params.name) {
-        case "set_credentials":
-          return await this.handleSetCredentials(request.params.arguments);
-        case "start_oauth_flow":
-          return await this.handleStartOAuthFlow(request.params.arguments);
-        case "complete_oauth_flow":
-          return await this.handleCompleteOAuthFlow(request.params.arguments);
-        case "search_foods":
-          return await this.handleSearchFoods(request.params.arguments);
-        case "get_food":
-          return await this.handleGetFood(request.params.arguments);
-        case "search_recipes":
-          return await this.handleSearchRecipes(request.params.arguments);
-        case "get_recipe":
-          return await this.handleGetRecipe(request.params.arguments);
-        case "get_user_profile":
-          return await this.handleGetUserProfile(request.params.arguments);
-        case "get_user_food_entries":
-          return await this.handleGetUserFoodEntries(request.params.arguments);
-        case "add_food_entry":
-          return await this.handleAddFoodEntry(request.params.arguments);
-        case "edit_food_entry":
-          return await this.handleEditFoodEntry(request.params.arguments);
-        case "delete_food_entry":
-          return await this.handleDeleteFoodEntry(request.params.arguments);
-        case "check_auth_status":
-          return await this.handleCheckAuthStatus(request.params.arguments);
-        case "get_weight_month":
-          return await this.handleGetWeightMonth(request.params.arguments);
-        default:
-          throw new McpError(
-            ErrorCode.MethodNotFound,
-            `Unknown tool: ${request.params.name}`,
-          );
+      const args = request.params.arguments as unknown;
+      try {
+        switch (request.params.name) {
+          case "set_credentials":
+            return await this.handleSetCredentials(args as SetCredentialsInput);
+          case "start_oauth_flow":
+            return await this.handleStartOAuthFlow(args as StartOAuthFlowInput | undefined);
+          case "complete_oauth_flow":
+            return await this.handleCompleteOAuthFlow(args as CompleteOAuthFlowInput);
+          case "search_foods":
+            return await this.handleSearchFoods(args as SearchFoodsInput);
+          case "get_food":
+            return await this.handleGetFood(args as GetFoodInput);
+          case "search_recipes":
+            return await this.handleSearchRecipes(args as SearchRecipesInput);
+          case "get_recipe":
+            return await this.handleGetRecipe(args as GetRecipeInput);
+          case "get_user_profile":
+            return await this.handleGetUserProfile();
+          case "get_user_food_entries":
+            return await this.handleGetUserFoodEntries(args as GetFoodEntriesInput | undefined);
+          case "add_food_entry":
+            return await this.handleAddFoodEntry(args as AddFoodEntryInput);
+          case "check_auth_status":
+            return await this.handleCheckAuthStatus();
+          case "get_weight_month":
+            return await this.handleGetWeightMonth(args as GetWeightMonthInput | undefined);
+          case "edit_food_entry":
+            return await this.handleEditFoodEntry(args as EditFoodEntryInput);
+          case "delete_food_entry":
+            return await this.handleDeleteFoodEntry(args as DeleteFoodEntryInput);
+          case "get_food_entries_month":
+            return await this.handleGetFoodEntriesMonth(args as GetFoodEntriesMonthInput | undefined);
+          case "update_weight":
+            return await this.handleUpdateWeight(args as UpdateWeightInput);
+          case "get_saved_meals":
+            return await this.handleGetSavedMeals(args as GetSavedMealsInput | undefined);
+          case "create_saved_meal":
+            return await this.handleCreateSavedMeal(args as CreateSavedMealInput);
+          case "edit_saved_meal":
+            return await this.handleEditSavedMeal(args as EditSavedMealInput);
+          case "delete_saved_meal":
+            return await this.handleDeleteSavedMeal(args as DeleteSavedMealInput);
+          case "get_saved_meal_items":
+            return await this.handleGetSavedMealItems(args as GetSavedMealItemsInput);
+          case "add_saved_meal_item":
+            return await this.handleAddSavedMealItem(args as AddSavedMealItemInput);
+          case "edit_saved_meal_item":
+            return await this.handleEditSavedMealItem(args as EditSavedMealItemInput);
+          case "delete_saved_meal_item":
+            return await this.handleDeleteSavedMealItem(args as DeleteSavedMealItemInput);
+          case "add_food_favorite":
+            return await this.handleAddFoodFavorite(args as AddFoodFavoriteInput);
+          case "delete_food_favorite":
+            return await this.handleDeleteFoodFavorite(args as DeleteFoodFavoriteInput);
+          case "get_favorite_foods":
+            return await this.handleGetFavoriteFoods();
+          case "get_most_eaten_foods":
+            return await this.handleGetMostEatenFoods(args as GetMostEatenInput | undefined);
+          case "get_recently_eaten_foods":
+            return await this.handleGetRecentlyEatenFoods(args as GetRecentlyEatenInput | undefined);
+          case "add_recipe_favorite":
+            return await this.handleAddRecipeFavorite(args as AddRecipeFavoriteInput);
+          case "delete_recipe_favorite":
+            return await this.handleDeleteRecipeFavorite(args as DeleteRecipeFavoriteInput);
+          case "get_favorite_recipes":
+            return await this.handleGetFavoriteRecipes();
+          default:
+            throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`);
+        }
+      } catch (error) {
+        if (error instanceof McpError) throw error;
+        throw new McpError(
+          ErrorCode.InternalError,
+          `Error: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
       }
     });
   }
 
-  private async handleSetCredentials(args: any) {
-    this.config.clientId = args.clientId;
-    this.config.clientSecret = args.clientSecret;
+  private async handleSetCredentials(args: SetCredentialsInput) {
+    this.client.updateConfig({
+      clientId: args.clientId,
+      clientSecret: args.clientSecret,
+    });
     await this.saveConfig();
 
     return {
-      content: [
-        {
-          type: "text",
-          text:
-            "FatSecret API credentials have been set successfully. You can now start the OAuth flow to authenticate users.",
-        },
-      ],
+      content: [{
+        type: "text",
+        text: "FatSecret API credentials have been set successfully. You can now start the OAuth flow to authenticate users.",
+      }],
     };
   }
 
-  private async handleStartOAuthFlow(args: any) {
-    if (!this.config.clientId || !this.config.clientSecret) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        "Please set your FatSecret API credentials first using set_credentials",
-      );
+  private async handleStartOAuthFlow(args?: StartOAuthFlowInput) {
+    if (!this.client.hasCredentials()) {
+      throw new McpError(ErrorCode.InvalidRequest, "Please set your FatSecret API credentials first using set_credentials");
     }
 
-    const callbackUrl = args.callbackUrl || "oob";
+    const callbackUrl = args?.callbackUrl || "oob";
+    const response = await this.client.getRequestToken(callbackUrl);
 
-    try {
-      const response = await this.makeOAuthRequest(
-        "POST",
-        this.requestTokenUrl,
-        { oauth_callback: callbackUrl },
-      );
+    const token = response.oauth_token as string;
+    const tokenSecret = response.oauth_token_secret as string;
+    const authUrl = `${this.client.authorizeUrl}?oauth_token=${token}`;
 
-      const token = response.oauth_token as string;
-      const tokenSecret = response.oauth_token_secret as string;
-      const authUrl = `${this.authorizeUrl}?oauth_token=${token}`;
-
-      return {
-        content: [
-          {
-            type: "text",
-            text:
-              `OAuth flow started successfully!\n\nRequest Token: ${token}\nRequest Token Secret: ${tokenSecret}\n\nPlease visit this URL to authorize the application:\n${authUrl}\n\nAfter authorization, you'll receive a verifier code. Use the complete_oauth_flow tool with the request token, request token secret, and verifier to complete the authentication.`,
-          },
-        ],
-      };
-    } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to start OAuth flow: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      );
-    }
+    return {
+      content: [{
+        type: "text",
+        text: `OAuth flow started successfully!\n\nRequest Token: ${token}\nRequest Token Secret: ${tokenSecret}\n\nPlease visit this URL to authorize the application:\n${authUrl}\n\nAfter authorization, you'll receive a verifier code. Use the complete_oauth_flow tool with the request token, request token secret, and verifier to complete the authentication.`,
+      }],
+    };
   }
 
-  private async handleCompleteOAuthFlow(args: any) {
-    if (!this.config.clientId || !this.config.clientSecret) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        "Please set your FatSecret API credentials first",
-      );
+  private async handleCompleteOAuthFlow(args: CompleteOAuthFlowInput) {
+    if (!this.client.hasCredentials()) {
+      throw new McpError(ErrorCode.InvalidRequest, "Please set your FatSecret API credentials first");
     }
 
-    try {
-      const response = await this.makeOAuthRequest(
-        "GET",
-        this.accessTokenUrl,
-        { oauth_verifier: args.verifier },
-        args.requestToken,
-        args.requestTokenSecret,
-      );
+    const response = await this.client.getAccessToken(
+      args.requestToken,
+      args.requestTokenSecret,
+      args.verifier
+    );
 
-      const tokenData = response as any;
+    this.client.updateConfig({
+      accessToken: response.oauth_token,
+      accessTokenSecret: response.oauth_token_secret,
+      userId: response.user_id,
+    });
+    await this.saveConfig();
 
-      this.config.accessToken = tokenData.oauth_token;
-      this.config.accessTokenSecret = tokenData.oauth_token_secret;
-      this.config.userId = tokenData.user_id;
-
-      await this.saveConfig();
-
-      return {
-        content: [
-          {
-            type: "text",
-            text:
-              `OAuth flow completed successfully! You are now authenticated with FatSecret.\n\nUser ID: ${this.config.userId}\n\nYou can now use user-specific tools like get_user_profile, get_user_food_entries, and add_food_entry.`,
-          },
-        ],
-      };
-    } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to complete OAuth flow: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      );
-    }
+    return {
+      content: [{
+        type: "text",
+        text: `OAuth flow completed successfully! You are now authenticated with FatSecret.\n\nUser ID: ${response.user_id}\n\nYou can now use user-specific tools like get_user_profile, get_user_food_entries, and add_food_entry.`,
+      }],
+    };
   }
 
-  private async handleSearchFoods(args: any) {
-    if (!this.config.clientId || !this.config.clientSecret) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        "Please set your FatSecret API credentials first",
-      );
+  private async handleSearchFoods(args: SearchFoodsInput) {
+    if (!this.client.hasCredentials()) {
+      throw new McpError(ErrorCode.InvalidRequest, "Please set your FatSecret API credentials first");
     }
 
-    try {
-      const params = {
-        method: "foods.search",
-        search_expression: args.searchExpression,
-        page_number: args.pageNumber?.toString() || "0",
-        max_results: args.maxResults?.toString() || "20",
-        format: "json",
-      };
+    const response = await this.client.searchFoods(args.searchExpression, {
+      pageNumber: args.pageNumber,
+      maxResults: args.maxResults,
+      region: args.region,
+      language: args.language,
+    });
 
-      const response = await this.makeApiRequest(
-        "GET",
-        this.baseUrl,
-        params,
-        false,
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(response, null, 2),
-          },
-        ],
-      };
-    } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to search foods: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      );
-    }
+    return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
   }
 
-  private async handleGetFood(args: any) {
-    if (!this.config.clientId || !this.config.clientSecret) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        "Please set your FatSecret API credentials first",
-      );
+  private async handleGetFood(args: GetFoodInput) {
+    if (!this.client.hasCredentials()) {
+      throw new McpError(ErrorCode.InvalidRequest, "Please set your FatSecret API credentials first");
     }
 
-    try {
-      const params = {
-        method: "food.get",
-        food_id: args.foodId,
-        format: "json",
-      };
-
-      const response = await this.makeApiRequest(
-        "GET",
-        this.baseUrl,
-        params,
-        false,
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(response, null, 2),
-          },
-        ],
-      };
-    } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to get food: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      );
-    }
+    const response = await this.client.getFood(args.foodId, {
+      region: args.region,
+      language: args.language,
+    });
+    return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
   }
 
-  private async handleSearchRecipes(args: any) {
-    if (!this.config.clientId || !this.config.clientSecret) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        "Please set your FatSecret API credentials first",
-      );
+  private async handleSearchRecipes(args: SearchRecipesInput) {
+    if (!this.client.hasCredentials()) {
+      throw new McpError(ErrorCode.InvalidRequest, "Please set your FatSecret API credentials first");
     }
 
-    try {
-      const params = {
-        method: "recipes.search",
-        search_expression: args.searchExpression,
-        page_number: args.pageNumber?.toString() || "0",
-        max_results: args.maxResults?.toString() || "20",
-        format: "json",
-      };
+    const response = await this.client.searchRecipes(args.searchExpression, {
+      recipeTypes: args.recipeTypes,
+      recipeTypesMatchAll: args.recipeTypesMatchAll,
+      mustHaveImages: args.mustHaveImages,
+      caloriesFrom: args.caloriesFrom,
+      caloriesTo: args.caloriesTo,
+      carbPercentageFrom: args.carbPercentageFrom,
+      carbPercentageTo: args.carbPercentageTo,
+      proteinPercentageFrom: args.proteinPercentageFrom,
+      proteinPercentageTo: args.proteinPercentageTo,
+      fatPercentageFrom: args.fatPercentageFrom,
+      fatPercentageTo: args.fatPercentageTo,
+      prepTimeFrom: args.prepTimeFrom,
+      prepTimeTo: args.prepTimeTo,
+      sortBy: args.sortBy,
+      pageNumber: args.pageNumber,
+      maxResults: args.maxResults,
+    });
 
-      const response = await this.makeApiRequest(
-        "GET",
-        this.baseUrl,
-        params,
-        false,
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(response, null, 2),
-          },
-        ],
-      };
-    } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to search recipes: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      );
-    }
+    return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
   }
 
-  private async handleGetRecipe(args: any) {
-    if (!this.config.clientId || !this.config.clientSecret) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        "Please set your FatSecret API credentials first",
-      );
+  private async handleGetRecipe(args: GetRecipeInput) {
+    if (!this.client.hasCredentials()) {
+      throw new McpError(ErrorCode.InvalidRequest, "Please set your FatSecret API credentials first");
     }
 
-    try {
-      const params = {
-        method: "recipe.get",
-        recipe_id: args.recipeId,
-        format: "json",
-      };
-
-      const response = await this.makeApiRequest(
-        "GET",
-        this.baseUrl,
-        params,
-        false,
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(response, null, 2),
-          },
-        ],
-      };
-    } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to get recipe: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      );
-    }
+    const response = await this.client.getRecipe(args.recipeId, {
+      language: args.language,
+    });
+    return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
   }
 
-  private async handleGetUserProfile(args: any) {
-    if (!this.config.accessToken || !this.config.accessTokenSecret) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        "User authentication required. Please complete the OAuth flow first.",
-      );
+  private async handleGetUserProfile() {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
     }
 
-    try {
-      const params = {
-        method: "profile.get",
-        format: "json",
-      };
-
-      const response = await this.makeApiRequest(
-        "GET",
-        this.baseUrl,
-        params,
-        true,
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(response, null, 2),
-          },
-        ],
-      };
-    } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to get user profile: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      );
-    }
+    const response = await this.client.getProfile();
+    return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
   }
 
-  private async handleGetUserFoodEntries(args: any) {
-    if (!this.config.accessToken || !this.config.accessTokenSecret) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        "User authentication required. Please complete the OAuth flow first.",
-      );
+  private async handleGetUserFoodEntries(args?: GetFoodEntriesInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
     }
 
-    try {
-      const date = this.dateToFatSecretFormat(args.date);
-      const params = {
-        method: "food_entries.get",
-        date: date,
-        format: "json",
-      };
-
-      const response = await this.makeApiRequest(
-        "GET",
-        this.baseUrl,
-        params,
-        true,
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(response, null, 2),
-          },
-        ],
-      };
-    } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to get food entries: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      );
-    }
+    const response = await this.client.getFoodEntries(args?.date);
+    return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
   }
 
-  private async handleAddFoodEntry(args: any) {
-    if (!this.config.accessToken || !this.config.accessTokenSecret) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        "User authentication required. Please complete the OAuth flow first.",
-      );
+  private async handleAddFoodEntry(args: AddFoodEntryInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
     }
 
-    try {
-      const date = this.dateToFatSecretFormat(args.date);
-      const params = {
-        method: "food_entry.create",
-        food_id: args.foodId,
-        food_entry_name: args.foodName,
-        serving_id: args.servingId,
-        number_of_units: args.quantity.toString(),
-        meal: args.mealType,
-        date: date,
-        format: "json",
-      };
+    const response = await this.client.createFoodEntry({
+      foodId: args.foodId,
+      foodName: args.foodName,
+      servingId: args.servingId,
+      quantity: args.quantity,
+      mealType: args.mealType,
+      date: args.date,
+    });
 
-      const response = await this.makeApiRequest(
-        "POST",
-        this.baseUrl,
-        params,
-        true,
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Food entry added successfully!\n\n${
-              JSON.stringify(response, null, 2)
-            }`,
-          },
-        ],
-      };
-    } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to add food entry: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      );
-    }
+    return {
+      content: [{
+        type: "text",
+        text: `Food entry added successfully!\n\n${JSON.stringify(response, null, 2)}`,
+      }],
+    };
   }
 
-  private async handleEditFoodEntry(args: any) {
-    if (!this.config.accessToken || !this.config.accessTokenSecret) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        "User authentication required. Please complete the OAuth flow first.",
-      );
-    }
-
-    try {
-      const params: Record<string, string> = {
-        method: "food_entry.edit",
-        food_entry_id: args.foodEntryId,
-        format: "json",
-      };
-
-      // Add optional parameters if provided
-      if (args.foodEntryName) {
-        params.food_entry_name = args.foodEntryName;
-      }
-      if (args.servingId) {
-        params.serving_id = args.servingId;
-      }
-      if (args.quantity !== undefined) {
-        params.number_of_units = args.quantity.toString();
-      }
-      if (args.mealType) {
-        params.meal = args.mealType;
-      }
-
-      const response = await this.makeApiRequest(
-        "POST",
-        this.baseUrl,
-        params,
-        true,
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Food entry edited successfully!\n\n${
-              JSON.stringify(response, null, 2)
-            }`,
-          },
-        ],
-      };
-    } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to edit food entry: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      );
-    }
-  }
-
-  private async handleDeleteFoodEntry(args: any) {
-    if (!this.config.accessToken || !this.config.accessTokenSecret) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        "User authentication required. Please complete the OAuth flow first.",
-      );
-    }
-
-    try {
-      const params = {
-        method: "food_entry.delete",
-        food_entry_id: args.foodEntryId,
-        format: "json",
-      };
-
-      const response = await this.makeApiRequest(
-        "POST",
-        this.baseUrl,
-        params,
-        true,
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Food entry deleted successfully!\n\n${
-              JSON.stringify(response, null, 2)
-            }`,
-          },
-        ],
-      };
-    } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to delete food entry: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      );
-    }
-  }
-
-  private async handleCheckAuthStatus(args: any) {
-    const hasCredentials = !!(this.config.clientId && this.config.clientSecret);
-    const hasAccessToken =
-      !!(this.config.accessToken && this.config.accessTokenSecret);
+  private async handleCheckAuthStatus() {
+    const config = this.client.getConfig();
+    const hasCredentials = this.client.hasCredentials();
+    const hasAccessToken = this.client.hasAccessToken();
 
     let status = "Not configured";
     if (hasCredentials && hasAccessToken) {
@@ -1145,57 +783,319 @@ class FatSecretMCPServer {
     }
 
     return {
-      content: [
-        {
-          type: "text",
-          text:
-            `Authentication Status: ${status}\n\nCredentials configured: ${hasCredentials}\nUser authenticated: ${hasAccessToken}\nUser ID: ${
-              this.config.userId || "N/A"
-            }`,
-        },
-      ],
+      content: [{
+        type: "text",
+        text: `Authentication Status: ${status}\n\nCredentials configured: ${hasCredentials}\nUser authenticated: ${hasAccessToken}\nUser ID: ${config.userId || "N/A"}`,
+      }],
     };
   }
 
-  private async handleGetWeightMonth(args: any) {
-    if (!this.config.accessToken || !this.config.accessTokenSecret) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        "User authentication required. Please complete the OAuth flow first.",
-      );
+  private async handleGetWeightMonth(args?: GetWeightMonthInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
     }
 
-    try {
-      const date = this.dateToFatSecretFormat(args.date);
-      const params = {
-        method: "weights.get_month",
-        date: date,
-        format: "json",
-      };
+    const response = await this.client.getWeightMonth(args?.date);
+    return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
+  }
 
-      const response = await this.makeApiRequest(
-        "GET",
-        this.baseUrl,
-        params,
-        true,
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(response, null, 2),
-          },
-        ],
-      };
-    } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to get weight entries for month: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      );
+  private async handleEditFoodEntry(args: EditFoodEntryInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
     }
+
+    const response = await this.client.editFoodEntry({
+      foodEntryId: args.foodEntryId,
+      foodName: args.foodName,
+      servingId: args.servingId,
+      quantity: args.quantity,
+      mealType: args.mealType,
+    });
+
+    return {
+      content: [{
+        type: "text",
+        text: `Food entry updated successfully!\n\n${JSON.stringify(response, null, 2)}`,
+      }],
+    };
+  }
+
+  private async handleDeleteFoodEntry(args: DeleteFoodEntryInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.deleteFoodEntry(args.foodEntryId);
+
+    return {
+      content: [{
+        type: "text",
+        text: `Food entry deleted successfully!\n\n${JSON.stringify(response, null, 2)}`,
+      }],
+    };
+  }
+
+  private async handleGetFoodEntriesMonth(args?: GetFoodEntriesMonthInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.getFoodEntriesMonth(args?.date);
+    return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
+  }
+
+  private async handleUpdateWeight(args: UpdateWeightInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.updateWeight({
+      currentWeightKg: args.currentWeightKg,
+      date: args.date,
+      weightType: args.weightType,
+      heightType: args.heightType,
+      goalWeightKg: args.goalWeightKg,
+      currentHeightCm: args.currentHeightCm,
+      comment: args.comment,
+    });
+
+    return {
+      content: [{
+        type: "text",
+        text: `Weight entry updated successfully!\n\n${JSON.stringify(response, null, 2)}`,
+      }],
+    };
+  }
+
+  private async handleGetSavedMeals(args?: GetSavedMealsInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.getSavedMeals(args?.meal);
+    return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
+  }
+
+  private async handleCreateSavedMeal(args: CreateSavedMealInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.createSavedMeal({
+      name: args.name,
+      description: args.description,
+      meals: args.meals,
+    });
+
+    return {
+      content: [{
+        type: "text",
+        text: `Saved meal created successfully!\n\n${JSON.stringify(response, null, 2)}`,
+      }],
+    };
+  }
+
+  private async handleEditSavedMeal(args: EditSavedMealInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.editSavedMeal({
+      savedMealId: args.savedMealId,
+      name: args.name,
+      description: args.description,
+      meals: args.meals,
+    });
+
+    return {
+      content: [{
+        type: "text",
+        text: `Saved meal updated successfully!\n\n${JSON.stringify(response, null, 2)}`,
+      }],
+    };
+  }
+
+  private async handleDeleteSavedMeal(args: DeleteSavedMealInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.deleteSavedMeal(args.savedMealId);
+
+    return {
+      content: [{
+        type: "text",
+        text: `Saved meal deleted successfully!\n\n${JSON.stringify(response, null, 2)}`,
+      }],
+    };
+  }
+
+  private async handleGetSavedMealItems(args: GetSavedMealItemsInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.getSavedMealItems(args.savedMealId);
+    return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
+  }
+
+  private async handleAddSavedMealItem(args: AddSavedMealItemInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.addSavedMealItem({
+      savedMealId: args.savedMealId,
+      foodId: args.foodId,
+      itemName: args.itemName,
+      servingId: args.servingId,
+      quantity: args.quantity,
+    });
+
+    return {
+      content: [{
+        type: "text",
+        text: `Item added to saved meal successfully!\n\n${JSON.stringify(response, null, 2)}`,
+      }],
+    };
+  }
+
+  private async handleEditSavedMealItem(args: EditSavedMealItemInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.editSavedMealItem({
+      savedMealItemId: args.savedMealItemId,
+      itemName: args.itemName,
+      quantity: args.quantity,
+    });
+
+    return {
+      content: [{
+        type: "text",
+        text: `Saved meal item updated successfully!\n\n${JSON.stringify(response, null, 2)}`,
+      }],
+    };
+  }
+
+  private async handleDeleteSavedMealItem(args: DeleteSavedMealItemInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.deleteSavedMealItem(args.savedMealItemId);
+
+    return {
+      content: [{
+        type: "text",
+        text: `Saved meal item deleted successfully!\n\n${JSON.stringify(response, null, 2)}`,
+      }],
+    };
+  }
+
+  private async handleAddFoodFavorite(args: AddFoodFavoriteInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.addFoodFavorite({
+      foodId: args.foodId,
+      servingId: args.servingId,
+      quantity: args.quantity,
+    });
+
+    return {
+      content: [{
+        type: "text",
+        text: `Food added to favorites successfully!\n\n${JSON.stringify(response, null, 2)}`,
+      }],
+    };
+  }
+
+  private async handleDeleteFoodFavorite(args: DeleteFoodFavoriteInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.deleteFoodFavorite({
+      foodId: args.foodId,
+      servingId: args.servingId,
+      quantity: args.quantity,
+    });
+
+    return {
+      content: [{
+        type: "text",
+        text: `Food removed from favorites successfully!\n\n${JSON.stringify(response, null, 2)}`,
+      }],
+    };
+  }
+
+  private async handleGetFavoriteFoods() {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.getFavoriteFoods();
+    return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
+  }
+
+  private async handleGetMostEatenFoods(args?: GetMostEatenInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.getMostEatenFoods(args?.meal);
+    return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
+  }
+
+  private async handleGetRecentlyEatenFoods(args?: GetRecentlyEatenInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.getRecentlyEatenFoods(args?.meal);
+    return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
+  }
+
+  private async handleAddRecipeFavorite(args: AddRecipeFavoriteInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.addRecipeFavorite(args.recipeId);
+
+    return {
+      content: [{
+        type: "text",
+        text: `Recipe added to favorites successfully!\n\n${JSON.stringify(response, null, 2)}`,
+      }],
+    };
+  }
+
+  private async handleDeleteRecipeFavorite(args: DeleteRecipeFavoriteInput) {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.deleteRecipeFavorite(args.recipeId);
+
+    return {
+      content: [{
+        type: "text",
+        text: `Recipe removed from favorites successfully!\n\n${JSON.stringify(response, null, 2)}`,
+      }],
+    };
+  }
+
+  private async handleGetFavoriteRecipes() {
+    if (!this.client.hasAccessToken()) {
+      throw new McpError(ErrorCode.InvalidRequest, "User authentication required. Please complete the OAuth flow first.");
+    }
+
+    const response = await this.client.getFavoriteRecipes();
+    return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
   }
 
   async run() {

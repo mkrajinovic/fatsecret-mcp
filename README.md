@@ -7,8 +7,15 @@ A Model Context Protocol (MCP) server that provides access to the FatSecret nutr
 - **Complete OAuth 1.0a Implementation**: Full 3-legged OAuth flow for user authentication
 - **Food Database Access**: Search and retrieve detailed nutrition information
 - **Recipe Database**: Search for recipes and get detailed cooking instructions
-- **User Data Management**: Access user food diaries and add food entries
+- **User Data Management**: Access user food diaries, weight tracking, and add entries
 - **Secure Credential Storage**: Encrypted storage of API credentials and tokens
+
+### Not Yet Implemented (Requires OAuth 2.0)
+
+The following features require OAuth 2.0 authentication which is not yet supported:
+
+- `foods.autocomplete` — Food name autocomplete suggestions
+- `food.find_id_for_barcode` — Barcode scanning lookup
 
 ## Getting Started
 
@@ -22,7 +29,7 @@ A Model Context Protocol (MCP) server that provides access to the FatSecret nutr
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/fatsecret-mcp.git
+git clone https://github.com/astartsky/fatsecret-mcp.git
 cd fatsecret-mcp
 
 # Install dependencies
@@ -265,10 +272,58 @@ Add a food entry to the user's diary.
 **Parameters:**
 
 - `foodId` (string, required): FatSecret food ID
+- `foodName` (string, required): Name/description of the food item
 - `servingId` (string, required): Serving ID for the food
 - `quantity` (number, required): Quantity of the serving
-- `mealType` (string, required): Meal type (breakfast, lunch, dinner, snack)
+- `mealType` (string, required): Meal type (breakfast, lunch, dinner, other)
 - `date` (string, optional): Date in YYYY-MM-DD format (default: today)
+
+#### `edit_food_entry`
+
+Edit an existing food diary entry.
+
+**Parameters:**
+
+- `foodEntryId` (string, required): The food entry ID to edit
+- `foodName` (string, optional): New name/description
+- `servingId` (string, optional): New serving ID
+- `quantity` (number, optional): New quantity
+- `mealType` (string, optional): New meal type (breakfast, lunch, dinner, other)
+
+#### `delete_food_entry`
+
+Delete a food diary entry.
+
+**Parameters:**
+
+- `foodEntryId` (string, required): The food entry ID to delete
+
+#### `get_food_entries_month`
+
+Get summary of user's food diary entries for a month.
+
+**Parameters:**
+
+- `date` (string, optional): Date in YYYY-MM-DD format to specify the month (default: current month)
+
+#### `get_weight_month`
+
+Get user's weight entries for a specific month.
+
+**Parameters:**
+
+- `date` (string, optional): Date in YYYY-MM-DD format to specify the month (default: current month)
+
+#### `update_weight`
+
+Add or update a weight entry.
+
+**Parameters:**
+
+- `currentWeightKg` (number, required): Current weight in kilograms
+- `date` (string, optional): Date in YYYY-MM-DD format (default: today)
+- `goalWeightKg` (number, optional): Goal weight in kilograms
+- `comment` (string, optional): Optional comment for the weight entry
 
 ## Example Workflow
 
@@ -351,34 +406,66 @@ The server provides detailed error messages for common issues:
 
 ## Testing
 
-### Testing from the Command Line
+### Unit Tests
 
-The project includes several test utilities:
-
-#### 1. Interactive Test Tool
+Unit tests use mocked HTTP requests and don't require API credentials.
 
 ```bash
-# Run the interactive test menu
-node test-interactive.js
+npm test              # Watch mode
+npm run test:run      # Single run
+npm run test:coverage # With coverage report
 ```
 
-This provides a menu-driven interface to test all MCP tools.
+**Test structure:**
 
-#### 2. Date Conversion Test
+```
+src/__tests__/
+├── oauth/           # OAuth signature and request tests
+├── utils/           # Utility functions (encoding, date)
+├── methods/         # API method tests
+├── schemas/         # Zod validation schema tests
+├── integration/     # Integration tests (real API)
+└── client.test.ts   # FatSecret client tests
+```
+
+### Integration Tests
+
+Integration tests call the real FatSecret API and verify actual responses.
+
+**Setup credentials:**
+
+Create a `.env` file in the project root:
 
 ```bash
-# Test the date conversion logic
-node test-date-conversion.js
+# Required for public API methods (foods, recipes)
+FATSECRET_CLIENT_ID=your_client_id
+FATSECRET_CLIENT_SECRET=your_client_secret
+
+# Required for authenticated methods (profile, diary, weight)
+FATSECRET_ACCESS_TOKEN=user_access_token
+FATSECRET_ACCESS_TOKEN_SECRET=user_access_token_secret
 ```
 
-Verifies that dates are correctly converted to FatSecret's "days since epoch" format.
-
-#### 3. Direct JSON-RPC Testing
+**Run integration tests:**
 
 ```bash
-# Send test messages via pipe
-node test-mcp.js | node dist/index.js
+npm run test:integration
 ```
+
+**Test coverage:**
+
+| Module | Methods | Tests |
+|--------|---------|-------|
+| Foods | `searchFoods`, `getFood` | 9 |
+| Recipes | `searchRecipes`, `getRecipe` | 11 |
+| Profile | `getProfile` | 5 |
+| Diary | `getFoodEntries`, `createFoodEntry`, `editFoodEntry`, `deleteFoodEntry`, `getFoodEntriesMonth` | 16 |
+| Weight | `getWeightMonth`, `updateWeight` | 12 |
+
+**Notes:**
+- Tests are automatically skipped when credentials are not available
+- `createFoodEntry` tests create real entries in your FatSecret diary
+- Integration tests have a 30-second timeout for API calls
 
 ### Testing in Claude Desktop
 
@@ -432,13 +519,22 @@ npm run dev
 fatsecret-mcp/
 ├── src/
 │   ├── index.ts        # Main MCP server implementation
-│   └── cli.ts          # OAuth console utility
+│   ├── cli.ts          # OAuth console utility
+│   ├── client.ts       # FatSecret API client
+│   ├── methods/        # API method implementations
+│   ├── oauth/          # OAuth 1.0a implementation
+│   ├── schemas/        # Zod validation schemas
+│   ├── utils/          # Utility functions
+│   └── __tests__/      # Unit and integration tests
 ├── dist/               # Compiled JavaScript files
-├── test-*.js           # Test utilities
 ├── package.json
 ├── tsconfig.json
 └── README.md
 ```
+
+## Credits
+
+Originally created by [Felipe Coury](https://github.com/fcoury). Now maintained by [Dmitry Sinev](https://github.com/astartsky).
 
 ## License
 

@@ -8,7 +8,11 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run src/__tests__/integration/"
   },
   "keywords": [
     "mcp",
@@ -17,16 +21,19 @@
     "api",
     "oauth"
   ],
-  "author": "Your Name",
+  "author": "Dmitry Sinev <me@ast.rocks>",
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.4.0",
     "@types/node": "^20.0.0",
     "dotenv": "^17.0.1",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "zod": "^4.3.4"
   },
   "devDependencies": {
-    "typescript": "^5.8.3"
+    "@vitest/coverage-v8": "^2.1.9",
+    "typescript": "^5.8.3",
+    "vitest": "^2.1.0"
   },
   "bin": {
     "fatsecret-mcp-server": "./dist/index.js"
