@@ -1,5 +1,6 @@
 import { makeApiRequest } from "../oauth/request.js";
 import { dateToFatSecretFormat } from "../utils/date.js";
+import { requireAuth, validateQuantity } from "../utils/validation.js";
 import {
   FoodEntriesResponseSchema,
   FoodEntryCreateResponseSchema,
@@ -21,9 +22,7 @@ export async function getFoodEntries(
   config: FatSecretConfig,
   date?: string
 ): Promise<FoodEntriesResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   return makeApiRequest(
     "GET",
@@ -44,13 +43,8 @@ export async function createFoodEntry(
   config: FatSecretConfig,
   params: CreateFoodEntryParams
 ): Promise<FoodEntryCreateResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
-
-  if (params.quantity <= 0) {
-    throw new Error("Quantity must be greater than 0");
-  }
+  requireAuth(config);
+  validateQuantity(params.quantity);
 
   return makeApiRequest(
     "POST",
@@ -76,16 +70,14 @@ export async function editFoodEntry(
   config: FatSecretConfig,
   params: EditFoodEntryParams
 ): Promise<FoodEntryEditResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   if (!params.foodEntryId) {
     throw new Error("Food entry ID is required");
   }
 
-  if (params.quantity !== undefined && params.quantity <= 0) {
-    throw new Error("Quantity must be greater than 0");
+  if (params.quantity !== undefined) {
+    validateQuantity(params.quantity);
   }
 
   const requestParams: Record<string, string> = {
@@ -122,9 +114,7 @@ export async function deleteFoodEntry(
   config: FatSecretConfig,
   foodEntryId: string
 ): Promise<FoodEntryDeleteResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   if (!foodEntryId) {
     throw new Error("Food entry ID is required");
@@ -149,9 +139,7 @@ export async function getFoodEntriesMonth(
   config: FatSecretConfig,
   date?: string
 ): Promise<FoodEntriesMonthResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   return makeApiRequest(
     "GET",

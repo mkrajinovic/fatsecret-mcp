@@ -341,13 +341,13 @@ describe("updateWeight", () => {
   it("should throw error when weight is zero", async () => {
     await expect(
       updateWeight(authenticatedConfig, { currentWeightKg: 0 })
-    ).rejects.toThrow("Weight must be greater than 0");
+    ).rejects.toThrow("Current weight must be greater than 0");
   });
 
   it("should throw error when weight is negative", async () => {
     await expect(
       updateWeight(authenticatedConfig, { currentWeightKg: -5 })
-    ).rejects.toThrow("Weight must be greater than 0");
+    ).rejects.toThrow("Current weight must be greater than 0");
   });
 
   it("should use POST method", async () => {

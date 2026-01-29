@@ -95,10 +95,33 @@ async function executeRequest<T>(
   }
 
   let data: unknown;
+  let parseError: Error | undefined;
+
+  // Try JSON first (most API responses)
   try {
     data = JSON.parse(text);
-  } catch {
-    data = querystring.parse(text);
+  } catch (jsonError) {
+    // Try querystring for OAuth token responses
+    try {
+      const parsed = querystring.parse(text);
+      // Only accept querystring if it actually parsed something meaningful
+      if (Object.keys(parsed).length > 0 && !parsed[text]) {
+        data = parsed;
+      } else {
+        // Neither format worked, store the error
+        parseError = jsonError instanceof Error ? jsonError : new Error(String(jsonError));
+      }
+    } catch (qsError) {
+      parseError = jsonError instanceof Error ? jsonError : new Error(String(jsonError));
+    }
+  }
+
+  // If parsing failed completely, throw with context
+  if (parseError && data === undefined) {
+    throw new Error(
+      `${errorPrefix}: Failed to parse response. ` +
+      `Status: ${response.status}, Body: ${text.substring(0, 200)}${text.length > 200 ? "..." : ""}`
+    );
   }
 
   return validateResponse(schema, data);

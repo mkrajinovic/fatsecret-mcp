@@ -56,16 +56,27 @@ class FatSecretMCPServer {
   private configPath: string;
 
   constructor() {
-    this.server = new Server({
-      name: "fatsecret-mcp-server",
-      version: "0.1.0",
-    });
+    this.server = new Server(
+      {
+        name: "fatsecret-mcp-server",
+        version: "0.1.0",
+      },
+      {
+        capabilities: {
+          tools: {},
+        },
+      }
+    );
 
     this.configPath = path.join(os.homedir(), ".fatsecret-mcp-config.json");
-    this.client = new FatSecretClient({
-      clientId: process.env.CLIENT_ID || "",
-      clientSecret: process.env.CLIENT_SECRET || "",
-    });
+    // Skip validation - credentials are set dynamically via set_credentials tool
+    this.client = new FatSecretClient(
+      {
+        clientId: process.env.CLIENT_ID || "",
+        clientSecret: process.env.CLIENT_SECRET || "",
+      },
+      { skipCredentialValidation: true }
+    );
 
     this.setupToolHandlers();
   }

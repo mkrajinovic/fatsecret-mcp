@@ -2,3 +2,10 @@
 dist/
 node_modules
 coverage/
+
+# IDE and OS
+.DS_Store
+*.log
+
+# Local settings
+.claude/settings.local.json

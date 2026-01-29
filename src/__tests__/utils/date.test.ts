@@ -90,35 +90,35 @@ describe("dateToFatSecretFormat", () => {
       expect(numResult).toBeGreaterThan(20000);
     });
 
-    it("should handle invalid date string gracefully", () => {
-      // Invalid date strings result in NaN which becomes "NaN"
-      const result = dateToFatSecretFormat("not-a-date");
-      expect(result).toBe("NaN");
+    it("should throw error for invalid date string", () => {
+      expect(() => dateToFatSecretFormat("not-a-date")).toThrow(
+        'Invalid date format: "not-a-date". Expected YYYY-MM-DD format.'
+      );
     });
 
-    it("should handle empty string as current UTC date", () => {
-      // Empty string + "T00:00:00Z" = "T00:00:00Z" which JavaScript parses
-      // as current date at midnight UTC (implementation detail)
-      const result = dateToFatSecretFormat("");
-      const numResult = parseInt(result, 10);
-      // Should be a reasonable positive number (days since epoch)
-      expect(numResult).toBeGreaterThan(0);
+    it("should throw error for empty string", () => {
+      expect(() => dateToFatSecretFormat("")).toThrow(
+        'Invalid date format: "". Expected YYYY-MM-DD format.'
+      );
     });
 
-    it("should handle malformed date format", () => {
-      // Dates in wrong format with T00:00:00Z suffix
-      const result = dateToFatSecretFormat("01-15-2024");
-      // JavaScript Date parsing is lenient, this may parse unexpectedly
-      // Just verify it returns a string (behavior is implementation-defined)
-      expect(typeof result).toBe("string");
+    it("should throw error for malformed date format", () => {
+      expect(() => dateToFatSecretFormat("01-15-2024")).toThrow(
+        'Invalid date format: "01-15-2024". Expected YYYY-MM-DD format.'
+      );
     });
 
-    it("should handle partial date string as first day of month", () => {
-      // "2024-01" + "T00:00:00Z" = "2024-01T00:00:00Z"
-      // JavaScript parses this as 2024-01-01T00:00:00Z
-      const result = dateToFatSecretFormat("2024-01");
-      // Should equal 2024-01-01
-      expect(result).toBe("19723");
+    it("should throw error for partial date string", () => {
+      expect(() => dateToFatSecretFormat("2024-01")).toThrow(
+        'Invalid date format: "2024-01". Expected YYYY-MM-DD format.'
+      );
+    });
+
+    it("should throw error for non-existent date", () => {
+      // February 30th doesn't exist
+      expect(() => dateToFatSecretFormat("2024-02-30")).toThrow(
+        'Invalid date: "2024-02-30". The date does not exist.'
+      );
     });
   });
 });

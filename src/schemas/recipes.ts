@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { optionalSingleOrArray } from "./utils.js";
+import { optionalSingleOrArray, stringOrNumber } from "./utils.js";
 
 const RecipeNutritionSchema = z.object({
   calories: z.string().optional(),
@@ -18,7 +18,7 @@ const RecipeNutritionSchema = z.object({
 
 // Recipe item in search results (v3)
 const RecipeItemSchema = z.object({
-  recipe_id: z.string(),
+  recipe_id: stringOrNumber,
   recipe_name: z.string(),
   recipe_description: z.string(),
   recipe_image: z.string().optional(),
@@ -33,13 +33,13 @@ const RecipeItemSchema = z.object({
 });
 
 const IngredientSchema = z.object({
-  food_id: z.string(),
+  food_id: stringOrNumber,
   food_name: z.string(),
-  number_of_units: z.string(),
+  number_of_units: stringOrNumber,
   ingredient_description: z.string().optional(),
   ingredient_url: z.string().optional(),
   measurement_description: z.string().optional(),
-  serving_id: z.string().optional(),
+  serving_id: stringOrNumber.optional(),
 });
 
 const DirectionSchema = z.object({
@@ -58,7 +58,7 @@ export const RecipeSearchResponseSchema = z.object({
 
 export const RecipeDetailResponseSchema = z.object({
   recipe: z.object({
-    recipe_id: z.string(),
+    recipe_id: stringOrNumber,
     recipe_name: z.string(),
     recipe_description: z.string(),
     recipe_url: z.string().optional(),

@@ -15,6 +15,7 @@ import type {
   SearchRecipesOptions,
   GetRecipeOptions,
 } from "./types.js";
+import { requireCredentials } from "./utils/validation.js";
 import type {
   FoodSearchResponseParsed,
   FoodDetailResponseParsed,
@@ -43,12 +44,25 @@ import type {
 import * as methods from "./methods/index.js";
 import { AUTHORIZE_URL } from "./methods/auth.js";
 
+export interface FatSecretClientOptions {
+  /**
+   * Skip credential validation on construction.
+   * Use this when credentials will be set dynamically (e.g., MCP server).
+   */
+  skipCredentialValidation?: boolean;
+}
+
 export class FatSecretClient {
   private config: FatSecretConfig;
   readonly authorizeUrl = AUTHORIZE_URL;
 
-  constructor(config: FatSecretConfig) {
+  constructor(config: FatSecretConfig, options: FatSecretClientOptions = {}) {
     this.config = config;
+
+    // Validate credentials unless explicitly skipped
+    if (!options.skipCredentialValidation) {
+      requireCredentials(config);
+    }
   }
 
   updateConfig(updates: Partial<FatSecretConfig>): void {

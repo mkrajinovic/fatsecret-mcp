@@ -1,5 +1,6 @@
 import { makeApiRequest } from "../oauth/request.js";
 import { dateToFatSecretFormat } from "../utils/date.js";
+import { requireAuth, validateWeight, validateHeight } from "../utils/validation.js";
 import {
   WeightMonthResponseSchema,
   WeightUpdateResponseSchema,
@@ -15,9 +16,7 @@ export async function getWeightMonth(
   config: FatSecretConfig,
   date?: string
 ): Promise<WeightMonthResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   return makeApiRequest(
     "GET",
@@ -38,20 +37,16 @@ export async function updateWeight(
   config: FatSecretConfig,
   params: UpdateWeightParams
 ): Promise<WeightUpdateResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
+  requireAuth(config);
+
+  validateWeight(params.currentWeightKg, "Current weight");
+
+  if (params.goalWeightKg !== undefined) {
+    validateWeight(params.goalWeightKg, "Goal weight");
   }
 
-  if (params.currentWeightKg <= 0) {
-    throw new Error("Weight must be greater than 0");
-  }
-
-  if (params.goalWeightKg !== undefined && params.goalWeightKg <= 0) {
-    throw new Error("Goal weight must be greater than 0");
-  }
-
-  if (params.currentHeightCm !== undefined && params.currentHeightCm <= 0) {
-    throw new Error("Height must be greater than 0");
+  if (params.currentHeightCm !== undefined) {
+    validateHeight(params.currentHeightCm, "Height");
   }
 
   const requestParams: Record<string, string> = {

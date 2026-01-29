@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { optionalSingleOrArray } from "./utils.js";
+import { optionalSingleOrArray, stringOrNumber } from "./utils.js";
 
 const FoodEntrySchema = z.object({
-  food_entry_id: z.string(),
-  food_id: z.string(),
+  food_entry_id: stringOrNumber,
+  food_id: stringOrNumber,
   food_entry_name: z.string(),
-  serving_id: z.string(),
-  number_of_units: z.string(),
+  serving_id: stringOrNumber,
+  number_of_units: stringOrNumber,
   meal: z.string(),
   date_int: z.string(),
   calories: z.string().optional(),

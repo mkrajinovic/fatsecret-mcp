@@ -1,4 +1,5 @@
 import { makeApiRequest } from "../oauth/request.js";
+import { requireAuth, validateQuantity } from "../utils/validation.js";
 import {
   SavedMealsResponseSchema,
   SavedMealCreateResponseSchema,
@@ -27,9 +28,7 @@ export async function getSavedMeals(
   config: FatSecretConfig,
   meal?: MealType
 ): Promise<SavedMealsResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   const params: Record<string, string> = {
     method: "saved_meals.get",
@@ -49,9 +48,7 @@ export async function createSavedMeal(
   config: FatSecretConfig,
   params: CreateSavedMealParams
 ): Promise<SavedMealCreateResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   if (!params.name || params.name.trim() === "") {
     throw new Error("Saved meal name is required");
@@ -85,9 +82,7 @@ export async function editSavedMeal(
   config: FatSecretConfig,
   params: EditSavedMealParams
 ): Promise<SavedMealSuccessResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   if (!params.savedMealId) {
     throw new Error("Saved meal ID is required");
@@ -124,9 +119,7 @@ export async function deleteSavedMeal(
   config: FatSecretConfig,
   savedMealId: string
 ): Promise<SavedMealSuccessResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   if (!savedMealId) {
     throw new Error("Saved meal ID is required");
@@ -151,9 +144,7 @@ export async function getSavedMealItems(
   config: FatSecretConfig,
   savedMealId: string
 ): Promise<SavedMealItemsResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   if (!savedMealId) {
     throw new Error("Saved meal ID is required");
@@ -178,9 +169,7 @@ export async function addSavedMealItem(
   config: FatSecretConfig,
   params: AddSavedMealItemParams
 ): Promise<SavedMealItemAddResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   if (!params.savedMealId) {
     throw new Error("Saved meal ID is required");
@@ -198,9 +187,7 @@ export async function addSavedMealItem(
     throw new Error("Serving ID is required");
   }
 
-  if (params.quantity <= 0) {
-    throw new Error("Quantity must be greater than 0");
-  }
+  validateQuantity(params.quantity);
 
   return makeApiRequest(
     "POST",
@@ -225,16 +212,14 @@ export async function editSavedMealItem(
   config: FatSecretConfig,
   params: EditSavedMealItemParams
 ): Promise<SavedMealSuccessResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   if (!params.savedMealItemId) {
     throw new Error("Saved meal item ID is required");
   }
 
-  if (params.quantity !== undefined && params.quantity <= 0) {
-    throw new Error("Quantity must be greater than 0");
+  if (params.quantity !== undefined) {
+    validateQuantity(params.quantity);
   }
 
   const requestParams: Record<string, string> = {
@@ -265,9 +250,7 @@ export async function deleteSavedMealItem(
   config: FatSecretConfig,
   savedMealItemId: string
 ): Promise<SavedMealSuccessResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   if (!savedMealItemId) {
     throw new Error("Saved meal item ID is required");

@@ -1,4 +1,5 @@
 import { makeApiRequest } from "../oauth/request.js";
+import { requireAuth, validateQuantity } from "../utils/validation.js";
 import {
   FavoriteFoodsResponseSchema,
   FavoriteRecipesResponseSchema,
@@ -21,16 +22,14 @@ export async function addFoodFavorite(
   config: FatSecretConfig,
   params: AddFoodFavoriteParams
 ): Promise<FavoriteSuccessResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   if (!params.foodId) {
     throw new Error("Food ID is required");
   }
 
-  if (params.quantity !== undefined && params.quantity <= 0) {
-    throw new Error("Quantity must be greater than 0");
+  if (params.quantity !== undefined) {
+    validateQuantity(params.quantity);
   }
 
   const requestParams: Record<string, string> = {
@@ -61,16 +60,14 @@ export async function deleteFoodFavorite(
   config: FatSecretConfig,
   params: DeleteFoodFavoriteParams
 ): Promise<FavoriteSuccessResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   if (!params.foodId) {
     throw new Error("Food ID is required");
   }
 
-  if (params.quantity !== undefined && params.quantity <= 0) {
-    throw new Error("Quantity must be greater than 0");
+  if (params.quantity !== undefined) {
+    validateQuantity(params.quantity);
   }
 
   const requestParams: Record<string, string> = {
@@ -100,9 +97,7 @@ export async function deleteFoodFavorite(
 export async function getFavoriteFoods(
   config: FatSecretConfig
 ): Promise<FavoriteFoodsResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   return makeApiRequest(
     "GET",
@@ -122,9 +117,7 @@ export async function getMostEatenFoods(
   config: FatSecretConfig,
   meal?: MealType
 ): Promise<FavoriteFoodsResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   const params: Record<string, string> = {
     method: "foods.get_most_eaten",
@@ -144,9 +137,7 @@ export async function getRecentlyEatenFoods(
   config: FatSecretConfig,
   meal?: MealType
 ): Promise<FavoriteFoodsResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   const params: Record<string, string> = {
     method: "foods.get_recently_eaten",
@@ -166,9 +157,7 @@ export async function addRecipeFavorite(
   config: FatSecretConfig,
   recipeId: string
 ): Promise<FavoriteSuccessResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   if (!recipeId) {
     throw new Error("Recipe ID is required");
@@ -193,9 +182,7 @@ export async function deleteRecipeFavorite(
   config: FatSecretConfig,
   recipeId: string
 ): Promise<FavoriteSuccessResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   if (!recipeId) {
     throw new Error("Recipe ID is required");
@@ -219,9 +206,7 @@ export async function deleteRecipeFavorite(
 export async function getFavoriteRecipes(
   config: FatSecretConfig
 ): Promise<FavoriteRecipesResponseParsed> {
-  if (!config.accessToken || !config.accessTokenSecret) {
-    throw new Error("User authentication required");
-  }
+  requireAuth(config);
 
   return makeApiRequest(
     "GET",

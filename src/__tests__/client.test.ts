@@ -111,27 +111,33 @@ describe("FatSecretClient", () => {
     });
 
     it("should return false when clientId is missing", () => {
-      const client = new FatSecretClient({
-        clientId: "",
-        clientSecret: "secret",
-      });
+      const client = new FatSecretClient(
+        { clientId: "", clientSecret: "secret" },
+        { skipCredentialValidation: true }
+      );
       expect(client.hasCredentials()).toBe(false);
     });
 
     it("should return false when clientSecret is missing", () => {
-      const client = new FatSecretClient({
-        clientId: "id",
-        clientSecret: "",
-      });
+      const client = new FatSecretClient(
+        { clientId: "id", clientSecret: "" },
+        { skipCredentialValidation: true }
+      );
       expect(client.hasCredentials()).toBe(false);
     });
 
     it("should return false when both are missing", () => {
-      const client = new FatSecretClient({
-        clientId: "",
-        clientSecret: "",
-      });
+      const client = new FatSecretClient(
+        { clientId: "", clientSecret: "" },
+        { skipCredentialValidation: true }
+      );
       expect(client.hasCredentials()).toBe(false);
+    });
+
+    it("should throw when credentials are missing and validation is not skipped", () => {
+      expect(() => new FatSecretClient({ clientId: "", clientSecret: "" })).toThrow(
+        "FatSecret API credentials are required"
+      );
     });
   });
 

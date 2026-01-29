@@ -1,6 +1,14 @@
 import { z } from "zod";
 
 /**
+ * Zod helper to coerce number to string.
+ * API sometimes returns IDs as numbers instead of strings.
+ */
+export const stringOrNumber = z
+  .union([z.string(), z.number()])
+  .transform((val) => String(val));
+
+/**
  * Normalizes a field that can be either a single object or an array to always return an array.
  * FatSecret API returns single object when there's one item, array when multiple.
  */

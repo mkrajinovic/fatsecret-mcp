@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { singleOrArray, optionalSingleOrArray } from "./utils.js";
+import { singleOrArray, optionalSingleOrArray, stringOrNumber } from "./utils.js";
 
 // Ternary type: 1 = true, 0 = false, -1 = unknown
 const TernarySchema = z.number().int().min(-1).max(1);
@@ -10,13 +10,13 @@ const FoodImageSchema = z.object({
 });
 
 const AllergenSchema = z.object({
-  id: z.string(),
+  id: stringOrNumber,
   name: z.string(),
   value: TernarySchema,
 });
 
 const PreferenceSchema = z.object({
-  id: z.string(),
+  id: stringOrNumber,
   name: z.string(),
   value: TernarySchema,
 });
@@ -31,7 +31,7 @@ const FoodAttributesSchema = z.object({
 });
 
 const FoodItemSchema = z.object({
-  food_id: z.string(),
+  food_id: stringOrNumber,
   food_name: z.string(),
   food_type: z.string(),
   food_description: z.string(),
@@ -45,7 +45,7 @@ const FoodItemSchema = z.object({
 });
 
 const ServingSchema = z.object({
-  serving_id: z.string(),
+  serving_id: stringOrNumber,
   serving_description: z.string(),
   metric_serving_amount: z.string().optional(),
   metric_serving_unit: z.string().optional(),
@@ -82,7 +82,7 @@ export const FoodSearchResponseSchema = z.object({
 
 export const FoodDetailResponseSchema = z.object({
   food: z.object({
-    food_id: z.string(),
+    food_id: stringOrNumber,
     food_name: z.string(),
     food_type: z.string(),
     food_url: z.string().optional(),
